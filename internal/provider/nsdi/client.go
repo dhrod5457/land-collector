@@ -2,10 +2,12 @@ package nsdi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,6 +45,7 @@ func (g *rateGate) Wait(ctx context.Context) error {
 	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
+
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -54,7 +57,7 @@ func (g *rateGate) Wait(ctx context.Context) error {
 type Client struct {
 	httpClient *http.Client
 	serviceKey string
-	gate       *rateGate
+	gates      map[domain.Dataset]*rateGate
 	retries    int
 }
 
@@ -62,8 +65,13 @@ func NewClient(timeout time.Duration, serviceKey string, rps, retries int) *Clie
 	return &Client{
 		httpClient: &http.Client{Timeout: timeout},
 		serviceKey: serviceKey,
-		gate:       newRateGate(rps),
-		retries:    retries,
+		gates: map[domain.Dataset]*rateGate{
+			domain.DatasetLand:           newRateGate(rps),
+			domain.DatasetCharacteristic: newRateGate(rps),
+			domain.DatasetPrice:          newRateGate(rps),
+			domain.DatasetUsePlan:        newRateGate(rps),
+		},
+		retries: retries,
 	}
 }
 
@@ -71,12 +79,17 @@ func (c *Client) Fetch(ctx context.Context, ep Endpoint, pnu string) (domain.Rec
 	if ep.URL == "" {
 		return domain.Record{}, fmt.Errorf("endpoint for %s is empty", ep.Dataset)
 	}
+	gate, ok := c.gates[ep.Dataset]
+	if !ok {
+		return domain.Record{}, fmt.Errorf("unsupported dataset %s", ep.Dataset)
+	}
 
 	var lastErr error
 	for attempt := 0; attempt <= c.retries; attempt++ {
-		if err := c.gate.Wait(ctx); err != nil {
+		if err := gate.Wait(ctx); err != nil {
 			return domain.Record{}, err
 		}
+
 		record, retry, err := c.fetchOnce(ctx, ep, pnu)
 		if err == nil {
 			return record, nil
@@ -99,18 +112,10 @@ func (c *Client) Fetch(ctx context.Context, ep Endpoint, pnu string) (domain.Rec
 }
 
 func (c *Client) fetchOnce(ctx context.Context, ep Endpoint, pnu string) (domain.Record, bool, error) {
-	u, err := url.Parse(ep.URL)
-	if err != nil {
-		return domain.Record{}, false, err
-	}
+	requestURL := strings.ReplaceAll(ep.URL, "{serviceKey}", url.QueryEscape(c.serviceKey))
+	requestURL = strings.ReplaceAll(requestURL, "{pnu}", url.QueryEscape(pnu))
 
-	q := u.Query()
-	q.Set("serviceKey", c.serviceKey)
-	q.Set("pnu", pnu)
-	q.Set("format", "json")
-	u.RawQuery = q.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return domain.Record{}, false, err
 	}
@@ -129,6 +134,9 @@ func (c *Client) fetchOnce(ctx context.Context, ep Endpoint, pnu string) (domain
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		retry := resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
 		return domain.Record{}, retry, fmt.Errorf("%s returned HTTP %d", ep.Dataset, resp.StatusCode)
+	}
+	if !json.Valid(body) {
+		return domain.Record{}, false, fmt.Errorf("%s returned non-JSON payload", ep.Dataset)
 	}
 
 	return domain.Record{
