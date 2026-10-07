@@ -51,7 +51,31 @@ func (r *Repository) SaveBatch(ctx context.Context, records []domain.Record) err
 		if err != nil {
 			return fmt.Errorf("save %s/%s: %w", record.PNU, record.Dataset, err)
 		}
+
+		_, err = tx.Exec(ctx, `
+			DELETE FROM failed_requests
+			WHERE pnu = $1 AND dataset = $2
+		`, record.PNU, string(record.Dataset))
+		if err != nil {
+			return fmt.Errorf("clear failure %s/%s: %w", record.PNU, record.Dataset, err)
+		}
 	}
 
 	return tx.Commit(ctx)
+}
+
+func (r *Repository) SaveFailure(ctx context.Context, failure domain.Failure) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO failed_requests (pnu, dataset, failed_at, error_text, attempts)
+		VALUES ($1, $2, $3, $4, 1)
+		ON CONFLICT (pnu, dataset)
+		DO UPDATE SET
+			failed_at = EXCLUDED.failed_at,
+			error_text = EXCLUDED.error_text,
+			attempts = failed_requests.attempts + 1
+	`, failure.PNU, string(failure.Dataset), failure.FailedAt, failure.ErrorText)
+	if err != nil {
+		return fmt.Errorf("save failure %s/%s: %w", failure.PNU, failure.Dataset, err)
+	}
+	return nil
 }
