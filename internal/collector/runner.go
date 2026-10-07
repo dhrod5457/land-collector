@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dhrod5457/land-collector/internal/domain"
 	"github.com/dhrod5457/land-collector/internal/provider/nsdi"
@@ -14,6 +15,7 @@ import (
 
 type Saver interface {
 	SaveBatch(context.Context, []domain.Record) error
+	SaveFailure(context.Context, domain.Failure) error
 }
 
 type Fetcher interface {
@@ -54,7 +56,6 @@ func (r *Runner) RunFile(parent context.Context, path string) error {
 
 	go func() {
 		defer close(jobs)
-
 		scanner := bufio.NewScanner(file)
 		line := 0
 		for scanner.Scan() {
@@ -82,24 +83,35 @@ func (r *Runner) RunFile(parent context.Context, path string) error {
 	var failureCount int
 	var firstFailure error
 
+	recordFailure := func(pnu string, dataset domain.Dataset, fetchErr error) {
+		failure := domain.Failure{
+			PNU:       pnu,
+			Dataset:   dataset,
+			FailedAt:  time.Now().UTC(),
+			ErrorText: fetchErr.Error(),
+		}
+		if err := r.saver.SaveFailure(ctx, failure); err != nil {
+			fetchErr = fmt.Errorf("%w; persist failure: %v", fetchErr, err)
+		}
+		failureMu.Lock()
+		failureCount++
+		if firstFailure == nil {
+			firstFailure = fmt.Errorf("%s/%s: %w", pnu, dataset, fetchErr)
+		}
+		failureMu.Unlock()
+	}
+
 	for i := 0; i < r.workers; i++ {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-
 			for pnu := range jobs {
 				for _, endpoint := range r.endpoints {
 					record, err := r.fetcher.Fetch(ctx, endpoint, pnu)
 					if err != nil {
-						failureMu.Lock()
-						failureCount++
-						if firstFailure == nil {
-							firstFailure = fmt.Errorf("%s/%s: %w", pnu, endpoint.Dataset, err)
-						}
-						failureMu.Unlock()
+						recordFailure(pnu, endpoint.Dataset, err)
 						continue
 					}
-
 					select {
 					case records <- record:
 					case <-ctx.Done():
@@ -149,11 +161,7 @@ func (r *Runner) RunFile(parent context.Context, path string) error {
 	failureMu.Lock()
 	defer failureMu.Unlock()
 	if failureCount > 0 {
-		return fmt.Errorf(
-			"collection completed with %d failed requests; first: %w",
-			failureCount,
-			firstFailure,
-		)
+		return fmt.Errorf("collection completed with %d failed requests; first: %w", failureCount, firstFailure)
 	}
 	return nil
 }
