@@ -40,7 +40,18 @@ func NewRunner(fetcher Fetcher, saver Saver, endpoints []nsdi.Endpoint, workers,
 	}
 }
 
-func (r *Runner) RunFile(parent context.Context, path string) error {
+func (r *Runner) RunFile(ctx context.Context, path string) error {
+	return r.runFile(ctx, path, "")
+}
+
+func (r *Runner) RunRegionFile(ctx context.Context, path, regionPrefix string) error {
+	if regionPrefix == "" {
+		return fmt.Errorf("region prefix is required")
+	}
+	return r.runFile(ctx, path, regionPrefix)
+}
+
+func (r *Runner) runFile(parent context.Context, path, regionPrefix string) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
@@ -51,7 +62,7 @@ func (r *Runner) RunFile(parent context.Context, path string) error {
 	defer file.Close()
 
 	jobs := make(chan string, r.workers*2)
-	records := make(chan domain.Record, r.workers*len(r.endpoints))
+	records := make(chan domain.Record, r.workers*max(1, len(r.endpoints)))
 	producerErr := make(chan error, 1)
 
 	go func() {
@@ -68,6 +79,9 @@ func (r *Runner) RunFile(parent context.Context, path string) error {
 				producerErr <- fmt.Errorf("invalid PNU at line %d: %q", line, pnu)
 				cancel()
 				return
+			}
+			if regionPrefix != "" && !strings.HasPrefix(pnu, regionPrefix) {
+				continue
 			}
 			select {
 			case jobs <- pnu:
@@ -176,4 +190,11 @@ func validPNU(pnu string) bool {
 		}
 	}
 	return true
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
