@@ -9,29 +9,32 @@ import (
 )
 
 type Config struct {
-	DatabaseURL       string
-	ServiceKey        string
-	LandAPIURL        string
+	DatabasePath       string
+	ServiceKey         string
+	LandAPIURL         string
 	CharacteristicURL string
-	PriceURL          string
-	UsePlanURL        string
-	Workers           int
-	LandRPS           int
-	CharacteristicRPS int
-	PriceRPS          int
-	UsePlanRPS        int
-	HTTPTimeout       time.Duration
-	MaxRetries        int
-	BatchSize         int
-	PNUFile           string
+	PriceURL           string
+	UsePlanURL         string
+	Workers            int
+	LandRPS            int
+	CharacteristicRPS  int
+	PriceRPS           int
+	UsePlanRPS         int
+	HTTPTimeout        time.Duration
+	MaxRetries         int
+	BatchSize          int
+	PNUFile            string
+	AdminAddr          string
+	AdminUsername      string
+	AdminPassword      string
 }
 
 func Load() (Config, error) {
 	defaultRPS := envInt("REQUESTS_PER_SECOND", 10)
 	cfg := Config{
-		DatabaseURL:       os.Getenv("DATABASE_URL"),
-		ServiceKey:        os.Getenv("DATA_GO_KR_SERVICE_KEY"),
-		LandAPIURL:        os.Getenv("LAND_API_URL"),
+		DatabasePath:       envString("DATABASE_PATH", "/data/land-collector.db"),
+		ServiceKey:         os.Getenv("DATA_GO_KR_SERVICE_KEY"),
+		LandAPIURL:         os.Getenv("LAND_API_URL"),
 		CharacteristicURL: os.Getenv("CHARACTERISTIC_API_URL"),
 		PriceURL:          os.Getenv("PRICE_API_URL"),
 		UsePlanURL:        os.Getenv("USE_PLAN_API_URL"),
@@ -44,10 +47,13 @@ func Load() (Config, error) {
 		MaxRetries:        envInt("MAX_RETRIES", 4),
 		BatchSize:         envInt("BATCH_SIZE", 200),
 		PNUFile:           envString("PNU_FILE", "/data/pnu.txt"),
+		AdminAddr:         envString("ADMIN_ADDR", ":8080"),
+		AdminUsername:     envString("ADMIN_USERNAME", "admin"),
+		AdminPassword:     os.Getenv("ADMIN_PASSWORD"),
 	}
 
-	if cfg.DatabaseURL == "" {
-		return Config{}, fmt.Errorf("DATABASE_URL is required")
+	if cfg.AdminPassword == "" {
+		return Config{}, fmt.Errorf("ADMIN_PASSWORD is required")
 	}
 	if cfg.ServiceKey == "" {
 		return Config{}, fmt.Errorf("DATA_GO_KR_SERVICE_KEY is required")
