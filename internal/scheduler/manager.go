@@ -22,6 +22,7 @@ type Repository interface {
 }
 
 type Manager struct {
+	appCtx     context.Context
 	repository Repository
 	fetcher    collector.Fetcher
 	saver      collector.Saver
@@ -36,6 +37,7 @@ type Manager struct {
 }
 
 func New(
+	appCtx context.Context,
 	repository Repository,
 	fetcher collector.Fetcher,
 	saver collector.Saver,
@@ -50,6 +52,7 @@ func New(
 		endpointMap[endpoint.Dataset] = endpoint
 	}
 	return &Manager{
+		appCtx:     appCtx,
 		repository: repository,
 		fetcher:    fetcher,
 		saver:      saver,
@@ -83,7 +86,7 @@ func (m *Manager) RunManual(
 	regionName string,
 	datasets string,
 ) error {
-	return m.startRun(ctx, nil, regionCode, regionName, datasets, "manual")
+	return m.startRun(m.appCtx, nil, regionCode, regionName, datasets, "manual")
 }
 
 func (m *Manager) runDue(ctx context.Context, now time.Time) {
