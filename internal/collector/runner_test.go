@@ -22,8 +22,9 @@ func (fakeFetcher) Fetch(_ context.Context, ep nsdi.Endpoint, pnu string) (domai
 }
 
 type fakeSaver struct {
-	mu      sync.Mutex
-	records []domain.Record
+	mu       sync.Mutex
+	records  []domain.Record
+	failures []domain.Failure
 }
 
 func (s *fakeSaver) SaveBatch(_ context.Context, records []domain.Record) error {
@@ -33,14 +34,17 @@ func (s *fakeSaver) SaveBatch(_ context.Context, records []domain.Record) error 
 	return nil
 }
 
+func (s *fakeSaver) SaveFailure(_ context.Context, failure domain.Failure) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failures = append(s.failures, failure)
+	return nil
+}
+
 func TestRunFileCollectsAllDatasets(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "pnu.txt")
-	if err := os.WriteFile(
-		path,
-		[]byte("1111010100100010000\n1111010100100020000\n"),
-		0o600,
-	); err != nil {
+	if err := os.WriteFile(path, []byte("1111010100100010000\n1111010100100020000\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
