@@ -17,3 +17,10 @@ type Record struct {
 	ObservedAt  time.Time
 	PayloadJSON []byte
 }
+
+type Failure struct {
+	PNU       string
+	Dataset   Dataset
+	FailedAt  time.Time
+	ErrorText string
+}
