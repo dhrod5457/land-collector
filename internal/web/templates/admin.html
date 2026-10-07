@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Land Collector Admin</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.6.1/dist/css/tabler.min.css">
+  <style>
+    body{min-height:100vh}
+    .navbar-vertical{width:15rem}
+    .page-wrapper{margin-left:15rem}
+    .metric{font-size:1.65rem;font-weight:700;letter-spacing:-.03em}
+    .dataset-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.6rem 1rem}
+    .table td,.table th{vertical-align:middle}
+    .section-note{color:var(--tblr-secondary);font-size:.875rem}
+    @media(max-width:991.98px){
+      .navbar-vertical{width:100%;position:relative}
+      .page-wrapper{margin-left:0}
+      .dataset-grid{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+  <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
+    <div class="container-fluid">
+      <h1 class="navbar-brand navbar-brand-autodark"><a href="/admin" class="text-decoration-none">Land Collector</a></h1>
+      <div class="collapse navbar-collapse show">
+        <ul class="navbar-nav pt-lg-3">
+          <li class="nav-item"><a class="nav-link" href="/admin?page=dashboard"><span class="nav-link-title">대시보드</span></a></li>
+          <li class="nav-item"><a class="nav-link" href="/admin?page=collect"><span class="nav-link-title">수집 작업</span></a></li>
+          <li class="nav-item"><a class="nav-link" href="/admin?page=schedules"><span class="nav-link-title">스케줄 관리</span></a></li>
+          <li class="nav-item"><a class="nav-link" href="/admin?page=runs"><span class="nav-link-title">실행 이력</span></a></li>
+          <li class="nav-item"><a class="nav-link" href="/admin?page=failures"><span class="nav-link-title">실패 관리</span></a></li>
+        </ul>
+      </div>
+    </div>
+  </aside>
+
+  <div class="page-wrapper">
+    <div class="page-header d-print-none">
+      <div class="container-xl">
+        <div class="row g-2 align-items-center">
+          <div class="col">
+            <div class="page-pretitle">Land Collector</div>
+            <h2 class="page-title">관리 콘솔</h2>
+          </div>
+          <div class="col-auto ms-auto">
+            <span class="badge bg-green-lt text-green">SQLite</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="page-body">
+      <div class="container-xl">
+        {{if .Message}}<div class="alert alert-success">{{.Message}}</div>{{end}}
+        {{if .Error}}<div class="alert alert-danger">{{.Error}}</div>{{end}}
+
+        {{if eq .Page "dashboard"}}
+        <div class="row row-cards mb-4">
+          <div class="col-sm-6 col-lg-3"><div class="card"><div class="card-body"><div class="text-secondary">활성 스케줄</div><div class="metric">{{.Stats.ActiveSchedules}}</div></div></div></div>
+          <div class="col-sm-6 col-lg-3"><div class="card"><div class="card-body"><div class="text-secondary">실행 중</div><div class="metric">{{.Stats.RunningRuns}}</div></div></div></div>
+          <div class="col-sm-6 col-lg-3"><div class="card"><div class="card-body"><div class="text-secondary">오늘 성공</div><div class="metric">{{.Stats.TodaySuccess}}</div></div></div></div>
+          <div class="col-sm-6 col-lg-3"><div class="card"><div class="card-body"><div class="text-secondary">미해결 실패</div><div class="metric">{{.Stats.FailedRequests}}</div></div></div></div>
+        </div>
+
+        <div class="card mb-4">
+          <div class="card-header"><h3 class="card-title">최근 실행</h3></div>
+          <div class="table-responsive">
+            <table class="table table-vcenter card-table">
+              <thead><tr><th>지역</th><th>트리거</th><th>시작</th><th>종료</th><th>상태</th></tr></thead>
+              <tbody>
+              {{range .Runs}}
+                <tr><td>{{.RegionName}}</td><td>{{.TriggerType}}</td><td>{{formatTime .StartedAt}}</td><td>{{formatTimePtr .FinishedAt}}</td><td><span class="badge {{statusClass .Status}}">{{.Status}}</span></td></tr>
+              {{else}}<tr><td colspan="5" class="text-secondary">실행 이력이 없습니다.</td></tr>{{end}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {{end}}
+
+        {{if eq .Page "collect"}}
+        <div class="row">
+          <div class="col-xl-8">
+            <div class="card">
+              <div class="card-header"><h3 class="card-title">즉시 수집</h3></div>
+              <div class="card-body">
+                <form method="post" action="/admin/run">
+                  <div class="mb-3">
+                    <label class="form-label">지역</label>
+                    <select name="region_code" class="form-select" required>
+                      <option value="">지역 선택</option>
+                      {{range .Regions}}<option value="{{.Code}}">{{if eq .Level "sigungu"}}└ {{end}}{{.Name}} ({{.Code}})</option>{{end}}
+                    </select>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">수집 대상</label>
+                    <div class="dataset-grid">
+                      <label class="form-check"><input class="form-check-input" type="checkbox" name="dataset_land" checked><span class="form-check-label">토지·임야정보</span></label>
+                      <label class="form-check"><input class="form-check-input" type="checkbox" name="dataset_characteristic" checked><span class="form-check-label">토지특성정보</span></label>
+                      <label class="form-check"><input class="form-check-input" type="checkbox" name="dataset_price" checked><span class="form-check-label">개별공시지가</span></label>
+                      <label class="form-check"><input class="form-check-input" type="checkbox" name="dataset_use_plan" checked><span class="form-check-label">토지이용계획</span></label>
+                    </div>
+                  </div>
+                  <div class="section-note mb-3">선택한 지역코드로 시작하는 PNU만 수집합니다. 같은 지역이 실행 중이면 중복 실행을 막습니다.</div>
+                  <button class="btn btn-primary" type="submit">수집 시작</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+        {{end}}
+
+        {{if eq .Page "schedules"}}
+        <div class="row row-cards">
+          <div class="col-xl-5">
+            <div class="card">
+              <div class="card-header"><h3 class="card-title">스케줄 등록</h3></div>
+              <div class="card-body">
+                <form method="post" action="/admin/schedules">
+                  <div class="mb-3"><label class="form-label">이름</label><input class="form-control" name="name" placeholder="예: 제주 매일 수집"></div>
+                  <div class="mb-3"><label class="form-label">지역</label><select class="form-select" name="region_code" required><option value="">지역 선택</option>{{range .Regions}}<option value="{{.Code}}">{{if eq .Level "sigungu"}}└ {{end}}{{.Name}}</option>{{end}}</select></div>
+                  <div class="row">
+                    <div class="col-md-6 mb-3"><label class="form-label">주기</label><select class="form-select" name="frequency"><option value="daily">매일</option><option value="weekly">매주</option><option value="monthly">매월</option></select></div>
+                    <div class="col-md-6 mb-3"><label class="form-label">시간</label><input class="form-control" type="time" name="time" value="02:00" required></div>
+                  </div>
+                  <div class="row">
+                    <div class="col-md-6 mb-3"><label class="form-label">요일(매주)</label><select class="form-select" name="weekday"><option value="0">일</option><option value="1">월</option><option value="2">화</option><option value="3">수</option><option value="4">목</option><option value="5">금</option><option value="6">토</option></select></div>
+                    <div class="col-md-6 mb-3"><label class="form-label">일자(매월)</label><input class="form-control" type="number" name="day_of_month" min="1" max="31" value="1"></div>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">수집 대상</label>
+                    <div class="dataset-grid">
+                      <label class="form-check"><input class="form-check-input" type="checkbox" name="dataset_land" checked><span class="form-check-label">토지·임야</span></label>
+                      <label class="form-check"><input class="form-check-input" type="checkbox" name="dataset_characteristic" checked><span class="form-check-label">토지특성</span></label>
+                      <label class="form-check"><input class="form-check-input" type="checkbox" name="dataset_price" checked><span class="form-check-label">개별공시지가</span></label>
+                      <label class="form-check"><input class="form-check-input" type="checkbox" name="dataset_use_plan" checked><span class="form-check-label">토지이용계획</span></label>
+                    </div>
+                  </div>
+                  <button class="btn btn-primary" type="submit">스케줄 등록</button>
+                </form>
+              </div>
+            </div>
+          </div>
+          <div class="col-xl-7">
+            <div class="card">
+              <div class="card-header"><h3 class="card-title">등록된 스케줄</h3></div>
+              <div class="table-responsive">
+                <table class="table table-vcenter card-table">
+                  <thead><tr><th>이름/지역</th><th>주기</th><th>대상</th><th>상태</th><th></th></tr></thead>
+                  <tbody>
+                  {{range .Schedules}}
+                    <tr>
+                      <td><div class="fw-semibold">{{.Name}}</div><div class="text-secondary small">{{.RegionName}} · {{.RegionCode}}</div></td>
+                      <td>{{scheduleText .}}</td>
+                      <td class="small">{{datasetText .Datasets}}</td>
+                      <td>{{if .Enabled}}<span class="badge bg-green-lt text-green">활성</span>{{else}}<span class="badge bg-secondary-lt">중지</span>{{end}}</td>
+                      <td class="text-end">
+                        <form class="d-inline" method="post" action="/admin/schedules/{{.ID}}/toggle"><button class="btn btn-sm btn-outline-secondary" type="submit">{{if .Enabled}}중지{{else}}활성화{{end}}</button></form>
+                        <form class="d-inline" method="post" action="/admin/schedules/{{.ID}}/delete"><button class="btn btn-sm btn-outline-danger" type="submit">삭제</button></form>
+                      </td>
+                    </tr>
+                  {{else}}<tr><td colspan="5" class="text-secondary">등록된 스케줄이 없습니다.</td></tr>{{end}}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        {{end}}
+
+        {{if eq .Page "runs"}}
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">실행 이력</h3></div>
+          <div class="table-responsive">
+            <table class="table table-vcenter card-table">
+              <thead><tr><th>ID</th><th>지역</th><th>트리거</th><th>시작</th><th>종료</th><th>상태</th><th>메시지</th></tr></thead>
+              <tbody>
+              {{range .Runs}}
+                <tr><td>{{.ID}}</td><td>{{.RegionName}}</td><td>{{.TriggerType}}</td><td>{{formatTime .StartedAt}}</td><td>{{formatTimePtr .FinishedAt}}</td><td><span class="badge {{statusClass .Status}}">{{.Status}}</span></td><td class="text-secondary small">{{.Message}}</td></tr>
+              {{else}}<tr><td colspan="7" class="text-secondary">실행 이력이 없습니다.</td></tr>{{end}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {{end}}
+
+        {{if eq .Page "failures"}}
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">미해결 실패 요청</h3></div>
+          <div class="table-responsive">
+            <table class="table table-vcenter card-table">
+              <thead><tr><th>PNU</th><th>데이터셋</th><th>실패 시각</th><th>오류</th></tr></thead>
+              <tbody>
+              {{range .Failures}}
+                <tr><td><code>{{.PNU}}</code></td><td>{{.Dataset}}</td><td>{{formatTime .FailedAt}}</td><td class="text-secondary small">{{.ErrorText}}</td></tr>
+              {{else}}<tr><td colspan="4" class="text-secondary">미해결 실패 요청이 없습니다.</td></tr>{{end}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {{end}}
+      </div>
+    </div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@tabler/core@1.6.1/dist/js/tabler.min.js"></script>
+</body>
+</html>
