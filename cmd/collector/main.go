@@ -2,15 +2,19 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
+	"net/http"
 	"os/signal"
 	"syscall"
+	"time"
 
-	"github.com/dhrod5457/land-collector/internal/collector"
 	"github.com/dhrod5457/land-collector/internal/config"
 	"github.com/dhrod5457/land-collector/internal/domain"
 	"github.com/dhrod5457/land-collector/internal/provider/nsdi"
-	"github.com/dhrod5457/land-collector/internal/repository/postgres"
+	sqliterepo "github.com/dhrod5457/land-collector/internal/repository/sqlite"
+	"github.com/dhrod5457/land-collector/internal/scheduler"
+	"github.com/dhrod5457/land-collector/internal/web"
 )
 
 func main() {
@@ -22,7 +26,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	repository, err := postgres.New(ctx, cfg.DatabaseURL)
+	repository, err := sqliterepo.New(ctx, cfg.DatabasePath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -47,10 +51,47 @@ func main() {
 		{Dataset: domain.DatasetUsePlan, URL: cfg.UsePlanURL},
 	}
 
-	runner := collector.NewRunner(client, repository, endpoints, cfg.Workers, cfg.BatchSize)
-	if err := runner.RunFile(ctx, cfg.PNUFile); err != nil {
+	kst := time.FixedZone("KST", 9*60*60)
+	manager := scheduler.New(
+		ctx,
+		repository,
+		client,
+		repository,
+		endpoints,
+		cfg.Workers,
+		cfg.BatchSize,
+		cfg.PNUFile,
+		kst,
+	)
+	go manager.Start(ctx)
+
+	admin, err := web.NewServer(repository, manager, cfg.AdminUsername, cfg.AdminPassword)
+	if err != nil {
 		log.Fatal(err)
 	}
 
-	log.Println("collection completed")
+	server := &http.Server{
+		Addr:              cfg.AdminAddr,
+		Handler:           admin.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	go func() {
+		log.Printf("admin server listening on %s", cfg.AdminAddr)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("admin server: %v", err)
+			stop()
+		}
+	}()
+
+	<-ctx.Done()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("admin shutdown: %v", err)
+	}
 }
