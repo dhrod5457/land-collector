@@ -12,7 +12,6 @@ import (
 
 func TestFetchExpandsURLTemplate(t *testing.T) {
 	var gotPNU, gotKey string
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPNU = r.URL.Query().Get("pnu")
 		gotKey = r.URL.Query().Get("key")
@@ -21,12 +20,8 @@ func TestFetchExpandsURLTemplate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(time.Second, "secret key", 100, 0)
-	record, err := client.Fetch(
-		context.Background(),
-		Endpoint{Dataset: domain.DatasetLand, URL: server.URL + "?key={serviceKey}&pnu={pnu}"},
-		"1111010100100010000",
-	)
+	client := NewClient(time.Second, "secret key", map[domain.Dataset]int{domain.DatasetLand: 100}, 0)
+	record, err := client.Fetch(context.Background(), Endpoint{Dataset: domain.DatasetLand, URL: server.URL + "?key={serviceKey}&pnu={pnu}"}, "1111010100100010000")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,12 +39,8 @@ func TestFetchRejectsNonJSONPayload(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(time.Second, "secret", 100, 0)
-	_, err := client.Fetch(
-		context.Background(),
-		Endpoint{Dataset: domain.DatasetLand, URL: server.URL + "?key={serviceKey}&pnu={pnu}"},
-		"1111010100100010000",
-	)
+	client := NewClient(time.Second, "secret", map[domain.Dataset]int{domain.DatasetLand: 100}, 0)
+	_, err := client.Fetch(context.Background(), Endpoint{Dataset: domain.DatasetLand, URL: server.URL + "?key={serviceKey}&pnu={pnu}"}, "1111010100100010000")
 	if err == nil {
 		t.Fatal("expected non-JSON error")
 	}
