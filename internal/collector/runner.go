@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/dhrod5457/land-collector/internal/domain"
@@ -27,13 +28,7 @@ type Runner struct {
 	batchSize int
 }
 
-func NewRunner(
-	fetcher Fetcher,
-	saver Saver,
-	endpoints []nsdi.Endpoint,
-	workers int,
-	batchSize int,
-) *Runner {
+func NewRunner(fetcher Fetcher, saver Saver, endpoints []nsdi.Endpoint, workers, batchSize int) *Runner {
 	return &Runner{
 		fetcher:   fetcher,
 		saver:     saver,
@@ -43,7 +38,10 @@ func NewRunner(
 	}
 }
 
-func (r *Runner) RunFile(ctx context.Context, path string) error {
+func (r *Runner) RunFile(parent context.Context, path string) error {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+
 	file, err := os.Open(path)
 	if err != nil {
 		return err
@@ -52,23 +50,56 @@ func (r *Runner) RunFile(ctx context.Context, path string) error {
 
 	jobs := make(chan string, r.workers*2)
 	records := make(chan domain.Record, r.workers*len(r.endpoints))
-	errCh := make(chan error, r.workers+1)
+	producerErr := make(chan error, 1)
+
+	go func() {
+		defer close(jobs)
+
+		scanner := bufio.NewScanner(file)
+		line := 0
+		for scanner.Scan() {
+			line++
+			pnu := strings.TrimSpace(scanner.Text())
+			if pnu == "" {
+				continue
+			}
+			if !validPNU(pnu) {
+				producerErr <- fmt.Errorf("invalid PNU at line %d: %q", line, pnu)
+				cancel()
+				return
+			}
+			select {
+			case jobs <- pnu:
+			case <-ctx.Done():
+				return
+			}
+		}
+		producerErr <- scanner.Err()
+	}()
 
 	var workers sync.WaitGroup
+	var failureMu sync.Mutex
+	var failureCount int
+	var firstFailure error
+
 	for i := 0; i < r.workers; i++ {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
+
 			for pnu := range jobs {
 				for _, endpoint := range r.endpoints {
 					record, err := r.fetcher.Fetch(ctx, endpoint, pnu)
 					if err != nil {
-						select {
-						case errCh <- fmt.Errorf("%s/%s: %w", pnu, endpoint.Dataset, err):
-						default:
+						failureMu.Lock()
+						failureCount++
+						if firstFailure == nil {
+							firstFailure = fmt.Errorf("%s/%s: %w", pnu, endpoint.Dataset, err)
 						}
+						failureMu.Unlock()
 						continue
 					}
+
 					select {
 					case records <- record:
 					case <-ctx.Done():
@@ -79,66 +110,62 @@ func (r *Runner) RunFile(ctx context.Context, path string) error {
 		}()
 	}
 
-	writerDone := make(chan error, 1)
 	go func() {
-		batch := make([]domain.Record, 0, r.batchSize)
-
-		flush := func() error {
-			if len(batch) == 0 {
-				return nil
-			}
-			if err := r.saver.SaveBatch(ctx, batch); err != nil {
-				return err
-			}
-			batch = batch[:0]
-			return nil
-		}
-
-		for record := range records {
-			batch = append(batch, record)
-			if len(batch) >= r.batchSize {
-				if err := flush(); err != nil {
-					writerDone <- err
-					return
-				}
-			}
-		}
-		writerDone <- flush()
+		workers.Wait()
+		close(records)
 	}()
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		pnu := scanner.Text()
-		if pnu == "" {
-			continue
+	batch := make([]domain.Record, 0, r.batchSize)
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
 		}
-		select {
-		case jobs <- pnu:
-		case <-ctx.Done():
-			close(jobs)
-			return ctx.Err()
+		if err := r.saver.SaveBatch(ctx, batch); err != nil {
+			return err
+		}
+		batch = batch[:0]
+		return nil
+	}
+
+	for record := range records {
+		batch = append(batch, record)
+		if len(batch) >= r.batchSize {
+			if err := flush(); err != nil {
+				cancel()
+				for range records {
+				}
+				return err
+			}
 		}
 	}
-	close(jobs)
 
-	if err := scanner.Err(); err != nil {
+	if err := flush(); err != nil {
+		return err
+	}
+	if err := <-producerErr; err != nil {
 		return err
 	}
 
-	workers.Wait()
-	close(records)
-
-	if err := <-writerDone; err != nil {
-		return err
-	}
-
-	close(errCh)
-	var failures int
-	for range errCh {
-		failures++
-	}
-	if failures > 0 {
-		return fmt.Errorf("collection completed with %d failed requests", failures)
+	failureMu.Lock()
+	defer failureMu.Unlock()
+	if failureCount > 0 {
+		return fmt.Errorf(
+			"collection completed with %d failed requests; first: %w",
+			failureCount,
+			firstFailure,
+		)
 	}
 	return nil
+}
+
+func validPNU(pnu string) bool {
+	if len(pnu) != 19 {
+		return false
+	}
+	for _, ch := range pnu {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
 }
