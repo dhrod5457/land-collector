@@ -61,17 +61,16 @@ type Client struct {
 	retries    int
 }
 
-func NewClient(timeout time.Duration, serviceKey string, rps, retries int) *Client {
+func NewClient(timeout time.Duration, serviceKey string, rates map[domain.Dataset]int, retries int) *Client {
+	gates := make(map[domain.Dataset]*rateGate, len(rates))
+	for dataset, rps := range rates {
+		gates[dataset] = newRateGate(rps)
+	}
 	return &Client{
 		httpClient: &http.Client{Timeout: timeout},
 		serviceKey: serviceKey,
-		gates: map[domain.Dataset]*rateGate{
-			domain.DatasetLand:           newRateGate(rps),
-			domain.DatasetCharacteristic: newRateGate(rps),
-			domain.DatasetPrice:          newRateGate(rps),
-			domain.DatasetUsePlan:        newRateGate(rps),
-		},
-		retries: retries,
+		gates:      gates,
+		retries:    retries,
 	}
 }
 
@@ -81,7 +80,7 @@ func (c *Client) Fetch(ctx context.Context, ep Endpoint, pnu string) (domain.Rec
 	}
 	gate, ok := c.gates[ep.Dataset]
 	if !ok {
-		return domain.Record{}, fmt.Errorf("unsupported dataset %s", ep.Dataset)
+		return domain.Record{}, fmt.Errorf("rate limit for %s is not configured", ep.Dataset)
 	}
 
 	var lastErr error
@@ -89,7 +88,6 @@ func (c *Client) Fetch(ctx context.Context, ep Endpoint, pnu string) (domain.Rec
 		if err := gate.Wait(ctx); err != nil {
 			return domain.Record{}, err
 		}
-
 		record, retry, err := c.fetchOnce(ctx, ep, pnu)
 		if err == nil {
 			return record, nil
@@ -98,7 +96,6 @@ func (c *Client) Fetch(ctx context.Context, ep Endpoint, pnu string) (domain.Rec
 		if !retry || attempt == c.retries {
 			break
 		}
-
 		backoff := time.Duration(1<<attempt) * 250 * time.Millisecond
 		timer := time.NewTimer(backoff)
 		select {
@@ -120,6 +117,7 @@ func (c *Client) fetchOnce(ctx context.Context, ep Endpoint, pnu string) (domain
 		return domain.Record{}, false, err
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "land-collector/1.0")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
