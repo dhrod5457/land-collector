@@ -31,7 +31,12 @@ func main() {
 	client := nsdi.NewClient(
 		cfg.HTTPTimeout,
 		cfg.ServiceKey,
-		cfg.RequestsPerSecond,
+		map[domain.Dataset]int{
+			domain.DatasetLand:           cfg.LandRPS,
+			domain.DatasetCharacteristic: cfg.CharacteristicRPS,
+			domain.DatasetPrice:          cfg.PriceRPS,
+			domain.DatasetUsePlan:        cfg.UsePlanRPS,
+		},
 		cfg.MaxRetries,
 	)
 
@@ -42,13 +47,7 @@ func main() {
 		{Dataset: domain.DatasetUsePlan, URL: cfg.UsePlanURL},
 	}
 
-	runner := collector.NewRunner(
-		client,
-		repository,
-		endpoints,
-		cfg.Workers,
-		cfg.BatchSize,
-	)
+	runner := collector.NewRunner(client, repository, endpoints, cfg.Workers, cfg.BatchSize)
 	if err := runner.RunFile(ctx, cfg.PNUFile); err != nil {
 		log.Fatal(err)
 	}
